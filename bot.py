@@ -31,9 +31,11 @@ from telethon.tl.types import (
 BOT_TOKEN = "9273617457:AAE2VEi_RAY1J1YJ7HinOfhDa-u3iRMA0NA"
 API_ID = 2040
 API_HASH = "b18441a1ff607e10a989891a5462e627"
-ADMIN_ID = 8697016918
 
-# Автоматическое определение пути к папке проекта на диске D
+# Список администраторов (теперь тут оба ID)
+ADMIN_IDS = [8697016918, 8558374845]
+
+# Автоматическое определение пути к папке проекта
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 SUBS_FILE = os.path.join(BASE_DIR, "subs.json")
@@ -43,7 +45,7 @@ CHANNEL_1_URL = "https://t.me/+T0bekcNuUsZhMWNi"
 CHANNEL_2_URL = "https://t.me/+QwbRY3HlS-U3ZWVl"
 
 # Контакт администратора для покупки
-ADMIN_CONTACT_URL = "https://t.me/tgsteclov"
+ADMIN_CONTACT_URL = "https://t.me/prestanniy"
 # ================================================
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
@@ -87,13 +89,13 @@ def save_subs(subs: dict):
         json.dump(subs, f, indent=4)
 
 def has_active_sub(user_id: int) -> bool:
-    if user_id == ADMIN_ID:
+    if user_id in ADMIN_IDS:
         return True
     subs = load_subs()
     return subs.get(str(user_id), 0) > time.time()
 
 def get_sub_status_text(user_id: int) -> str:
-    if user_id == ADMIN_ID:
+    if user_id in ADMIN_IDS:
         return "👑 Администратор (Безлимит)"
     subs = load_subs()
     exp_time = subs.get(str(user_id), 0)
@@ -139,7 +141,7 @@ def get_main_menu_kb(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💎 Купить подписку", callback_data="menu:buy")
         ]
     ]
-    if user_id == ADMIN_ID:
+    if user_id in ADMIN_IDS:
         buttons.append([InlineKeyboardButton(text="👑 Админ-панель", callback_data="menu:admin")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -231,7 +233,6 @@ async def cb_report_click(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ У тебя нет активной подписки! Купи её в профиле.", show_alert=True)
         return
 
-    # Выводим плашку с каналами
     text = (
         "📢 **Обязательная подписка на наши каналы!**\n\n"
         "Для использования инструмента подпишись на каналы ниже, "
@@ -255,7 +256,7 @@ async def cb_channels_done(callback: CallbackQuery, state: FSMContext):
 # ================= АДМИН-ПАНЕЛЬ =================
 @dp.callback_query(F.data == "menu:admin")
 async def cb_admin(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         return
     subs = load_subs()
     active_subs = sum(1 for exp in subs.values() if exp > time.time())
@@ -277,7 +278,7 @@ async def cb_admin(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "admin:give_sub")
 async def cb_admin_give_sub(callback: CallbackQuery, state: FSMContext):
-    if callback.from_user.id != ADMIN_ID:
+    if callback.from_user.id not in ADMIN_IDS:
         return
     await send_or_edit_menu(
         callback,
@@ -288,7 +289,7 @@ async def cb_admin_give_sub(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(BotStates.waiting_for_sub_input)
 async def process_sub_input(message: Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         return
     parts = message.text.strip().split()
     if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -308,7 +309,7 @@ async def process_sub_input(message: Message, state: FSMContext):
 
 @dp.message(Command("givesub"))
 async def cmd_givesub(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         return
     parts = message.text.split()
     if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
@@ -322,7 +323,7 @@ async def cmd_givesub(message: Message):
 
 @dp.message(Command("removesub"))
 async def cmd_removesub(message: Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_IDS:
         return
     parts = message.text.split()
     if len(parts) != 2:
@@ -369,7 +370,7 @@ async def process_reason(callback: CallbackQuery, state: FSMContext):
     if not session_files:
         await send_or_edit_menu(
             callback,
-            "❌ В папке `sessions/` на диске D нет ни одного `.session` файла.",
+            "❌ В папке `sessions/` нет ни одного `.session` файла.",
             get_back_kb()
         )
         return
@@ -394,11 +395,18 @@ async def process_reason(callback: CallbackQuery, state: FSMContext):
         try:
             await client.connect()
             if not await client.is_user_authorized():
+                print(f"[!] Сессия не авторизована: {session_path}")
                 dead_sessions += 1
                 await client.disconnect()
                 continue
 
-            entity = await client.get_input_entity(target)
+            try:
+                entity = await client.get_entity(target)
+            except Exception as ent_err:
+                print(f"[!] Не удалось найти сущность {target} через сессию {session_path}: {ent_err}")
+                fail_count += 1
+                await client.disconnect()
+                continue
 
             await client(ReportPeerRequest(
                 peer=entity,
@@ -406,14 +414,16 @@ async def process_reason(callback: CallbackQuery, state: FSMContext):
                 message="Systematic violation of Telegram Terms of Service and spam activity."
             ))
             success_count += 1
+            print(f"[OK] Жалоба успешно отправлена с сессии: {session_path}")
 
         except (UserDeactivatedBanError, AuthKeyUnregisteredError):
+            print(f"[!] Сессия заблокирована или не зарегистрирована: {session_path}")
             dead_sessions += 1
         except FloodWaitError as e:
-            print(f"[FloodWait] Лимит ожидания: {e.seconds} сек.")
+            print(f"[FloodWait] Сессия словила лимит: {e.seconds} сек.")
             fail_count += 1
         except Exception as e:
-            print(f"[Ошибка] {session_path}: {e}")
+            print(f"[Ошибка] Сессия {session_path} упала с исключением: {e}")
             fail_count += 1
         finally:
             await client.disconnect()
@@ -440,7 +450,7 @@ async def main():
         print(f"[!] Файл banner (.jpg/.png) НЕ найден в папке: {BASE_DIR}")
 
     print(f"[OK] Папка с сессиями: {SESSIONS_DIR}")
-    print("Бот успешно запущен на диске D...")
+    print("Бот успешно запущен...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
